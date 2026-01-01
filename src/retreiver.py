@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
@@ -27,30 +28,24 @@ def l2_normalize(vecs: np.ndarray, eps: float = 1e-12) -> np.ndarray:
 
 
 class Retriever:
-    """
-    Loads:
-      - chunks.jsonl
-      - embeddings.npy (normalized)
-      - (optional) index.faiss
-      - index_meta.json
+    def __init__(self, index_dir: Path, log_level: str = "INFO") -> None:
+        logging.basicConfig(level=getattr(logging, log_level.upper(), logging.INFO))
+        self.log = logging.getLogger("retriever")
 
-    Retrieval:
-      - If FAISS index is available, use it.
-      - Else fallback to cosine via dot product on normalized vectors.
-    """
-
-    def __init__(self, index_dir: Path) -> None:
         self.index_dir = index_dir.resolve()
         if not self.index_dir.exists():
             raise FileNotFoundError(f"index_dir not found: {self.index_dir}")
 
         meta_path = self.index_dir / "index_meta.json"
         if not meta_path.exists():
-            raise FileNotFoundError(f"Missing index_meta.json in {self.index_dir}. Run indexer first.")
+            raise FileNotFoundError(
+                f"Missing index_meta.json in {self.index_dir}. Run indexer first: "
+                f"python -m src.indexer --docs_dir .\\data_docs --index_dir .\\data_index"
+            )
 
         self.meta: Dict[str, Any] = json.loads(meta_path.read_text(encoding="utf-8"))
         self.model_name: str = self.meta["model_name"]
-
+        self.log.info("Loading model: %s", self.model_name)
         self.model = SentenceTransformer(self.model_name)
 
         self.chunks = self._load_chunks(self.index_dir / "chunks.jsonl")
@@ -60,6 +55,7 @@ class Retriever:
             raise ValueError("Mismatch: chunks count != embeddings rows")
 
         self.faiss = self._try_load_faiss(self.index_dir / "index.faiss")
+        self.log.info("Loaded %d chunk(s). FAISS=%s", len(self.chunks), "yes" if self.faiss else "no")
 
     def _load_chunks(self, path: Path) -> List[Dict[str, Any]]:
         rows: List[Dict[str, Any]] = []
@@ -76,7 +72,6 @@ class Retriever:
             return None
         try:
             import faiss  # type: ignore
-
             return faiss.read_index(str(path))
         except Exception:
             return None
@@ -94,14 +89,12 @@ class Retriever:
         ).astype(np.float32)
         q_emb = l2_normalize(q_emb)
 
-        # Use FAISS inner product on normalized vectors = cosine similarity
         if self.faiss is not None:
             scores, idx = self.faiss.search(q_emb.astype(np.float32), top_k)
             idx_list = idx[0].tolist()
             score_list = scores[0].tolist()
         else:
-            # NumPy fallback: cosine via dot product on normalized embeddings
-            sims = (self.embeddings @ q_emb[0]).astype(np.float32)  # (N,)
+            sims = (self.embeddings @ q_emb[0]).astype(np.float32)
             top_k = min(top_k, sims.shape[0])
             idx_list = np.argsort(-sims)[:top_k].tolist()
             score_list = sims[idx_list].tolist()
@@ -120,14 +113,18 @@ class Retriever:
                     end_char=int(ch["end_char"]),
                 )
             )
+
+        # Ensure sorted by score desc (safety)
+        results.sort(key=lambda r: r.score, reverse=True)
+
+        # Log top results (lightweight)
+        top_preview = ", ".join([f"{r.source_name}:{r.score:.3f}" for r in results[: min(3, len(results))]])
+        self.log.info("retrieve(top_k=%d) -> %s", top_k, top_preview)
+
         return results
 
 
 def context_only_answer(question: str, retrieved: List[RetrievedChunk], max_chars: int = 1200) -> str:
-    """
-    Day-1 answering: no LLM. Provide a compact response derived from top chunks.
-    Always returns a non-empty string if we have any retrieved context.
-    """
     if not retrieved:
         return "I could not find relevant context in the indexed documents for this question."
 
@@ -142,7 +139,7 @@ def context_only_answer(question: str, retrieved: List[RetrievedChunk], max_char
         piece = f"- [{r.source_name}] {excerpt}"
         if total + len(piece) > max_chars:
             remaining = max(0, max_chars - total)
-            if remaining > 50:
+            if remaining > 80:
                 piece = piece[:remaining].rstrip() + "..."
                 body_parts.append(piece)
             break

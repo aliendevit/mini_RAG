@@ -3,13 +3,16 @@ from __future__ import annotations
 
 import argparse
 import json
-from dataclasses import dataclass
+import logging
+import time
+from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Iterable, List, Dict, Any, Optional
+from typing import Iterable, List, Optional, Tuple
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
+from src.text_utils import chunk_text_smart, normalize_text
 
 SUPPORTED_EXTS = {".txt", ".md"}
 
@@ -24,6 +27,11 @@ class Chunk:
     text: str
 
 
+def l2_normalize(vecs: np.ndarray, eps: float = 1e-12) -> np.ndarray:
+    norms = np.linalg.norm(vecs, axis=1, keepdims=True)
+    return vecs / np.maximum(norms, eps)
+
+
 def iter_doc_paths(docs_dir: Path) -> Iterable[Path]:
     for p in docs_dir.rglob("*"):
         if p.is_file() and p.suffix.lower() in SUPPORTED_EXTS:
@@ -31,97 +39,35 @@ def iter_doc_paths(docs_dir: Path) -> Iterable[Path]:
 
 
 def read_text_file(path: Path) -> str:
-    # Robust UTF-8 read for Windows. If a file has odd encoding, replace invalid chars.
     return path.read_text(encoding="utf-8", errors="replace")
 
 
-def normalize_whitespace(text: str) -> str:
-    # Keep it simple: normalize line endings and excessive spaces.
-    text = text.replace("\r\n", "\n").replace("\r", "\n")
-    # Collapse huge whitespace runs but preserve newlines.
-    lines = [ln.strip() for ln in text.split("\n")]
-    # Remove repeated blank lines (2+ -> 1)
-    out_lines: List[str] = []
-    blank = False
-    for ln in lines:
-        if ln == "":
-            if not blank:
-                out_lines.append("")
-            blank = True
-        else:
-            out_lines.append(ln)
-            blank = False
-    return "\n".join(out_lines).strip()
+def build_chunks_for_doc(doc_path: Path, max_chars: int, overlap: int) -> List[Chunk]:
+    raw = read_text_file(doc_path)
+    norm = normalize_text(raw)
 
+    triples: List[Tuple[int, int, str]] = chunk_text_smart(norm, max_chars=max_chars, overlap=overlap)
 
-def chunk_text(
-    text: str,
-    max_chars: int = 900,
-    overlap: int = 150,
-) -> List[tuple[int, int, str]]:
-    """
-    Character-window chunking with overlap.
-    Simple and dependable for Day 1.
-    Returns list of (start_char, end_char, chunk_text).
-    """
-    if max_chars <= 0:
-        raise ValueError("max_chars must be > 0")
-    if overlap < 0:
-        raise ValueError("overlap must be >= 0")
-    if overlap >= max_chars:
-        raise ValueError("overlap must be < max_chars")
-
-    text = text.strip()
-    if not text:
-        return []
-
-    chunks: List[tuple[int, int, str]] = []
-    start = 0
-    n = len(text)
-
-    while start < n:
-        end = min(start + max_chars, n)
-        chunk = text[start:end].strip()
-        if chunk:
-            chunks.append((start, end, chunk))
-        if end == n:
-            break
-        start = max(0, end - overlap)
-
-    return chunks
-
-
-def build_chunks_from_docs(docs_dir: Path) -> List[Chunk]:
     chunks: List[Chunk] = []
-    for doc_path in sorted(iter_doc_paths(docs_dir)):
-        raw = read_text_file(doc_path)
-        cleaned = normalize_whitespace(raw)
-        spans = chunk_text(cleaned)
-
-        for i, (s, e, ctext) in enumerate(spans):
-            chunk_id = f"{doc_path.name}::chunk_{i:04d}"
-            chunks.append(
-                Chunk(
-                    chunk_id=chunk_id,
-                    source_path=str(doc_path.resolve()),
-                    source_name=doc_path.name,
-                    start_char=s,
-                    end_char=e,
-                    text=ctext,
-                )
+    for i, (s, e, txt) in enumerate(triples):
+        chunk_id = f"{doc_path.name}::chunk_{i:04d}"
+        chunks.append(
+            Chunk(
+                chunk_id=chunk_id,
+                source_path=str(doc_path.resolve()),
+                source_name=doc_path.name,
+                start_char=s,
+                end_char=e,
+                text=txt,
             )
+        )
     return chunks
 
 
-def l2_normalize(mat: np.ndarray, eps: float = 1e-12) -> np.ndarray:
-    norms = np.linalg.norm(mat, axis=1, keepdims=True)
-    return mat / np.maximum(norms, eps)
-
-
-def try_build_faiss_index(embeddings: np.ndarray) -> tuple[Optional[Any], str]:
+def try_build_faiss_index(embeddings: np.ndarray, index_path: Path) -> str:
     """
-    Try FAISS IndexFlatIP (cosine via normalized vectors).
-    Returns (faiss_index_or_none, status_message)
+    Try to build a FAISS IndexFlatIP (inner product). Works with normalized embeddings.
+    Returns a status string for meta.
     """
     try:
         import faiss  # type: ignore
@@ -129,136 +75,115 @@ def try_build_faiss_index(embeddings: np.ndarray) -> tuple[Optional[Any], str]:
         dim = embeddings.shape[1]
         index = faiss.IndexFlatIP(dim)
         index.add(embeddings.astype(np.float32))
-        return index, "faiss_ok"
+        faiss.write_index(index, str(index_path))
+        return "built"
     except Exception as e:
-        return None, f"faiss_unavailable: {type(e).__name__}: {e}"
-
-
-def save_index(
-    index_dir: Path,
-    model_name: str,
-    chunks: List[Chunk],
-    embeddings_norm: np.ndarray,
-    faiss_index: Optional[Any],
-    faiss_status: str,
-) -> None:
-    index_dir.mkdir(parents=True, exist_ok=True)
-
-    # Save chunks metadata
-    chunks_path = index_dir / "chunks.jsonl"
-    with chunks_path.open("w", encoding="utf-8") as f:
-        for ch in chunks:
-            rec = {
-                "chunk_id": ch.chunk_id,
-                "source_path": ch.source_path,
-                "source_name": ch.source_name,
-                "start_char": ch.start_char,
-                "end_char": ch.end_char,
-                "text": ch.text,
-            }
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-
-    # Save embeddings (normalized, float32)
-    emb_path = index_dir / "embeddings.npy"
-    np.save(emb_path, embeddings_norm.astype(np.float32))
-
-    # Save FAISS index if available
-    faiss_path = index_dir / "index.faiss"
-    if faiss_index is not None:
-        try:
-            import faiss  # type: ignore
-
-            faiss.write_index(faiss_index, str(faiss_path))
-        except Exception:
-            # If something goes wrong, we still have embeddings.npy fallback.
-            pass
-
-    # Save meta
-    meta = {
-        "model_name": model_name,
-        "num_chunks": len(chunks),
-        "embedding_dim": int(embeddings_norm.shape[1]) if len(chunks) > 0 else 0,
-        "faiss_status": faiss_status,
-        "files_supported": sorted(list(SUPPORTED_EXTS)),
-    }
-    (index_dir / "index_meta.json").write_text(
-        json.dumps(meta, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+        return f"unavailable: {type(e).__name__}: {e}"
 
 
 def build_index(
     docs_dir: Path,
     index_dir: Path,
     model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
+    max_chars: int = 900,
+    overlap: int = 150,
     batch_size: int = 32,
-) -> Dict[str, Any]:
+    log_level: str = "INFO",
+) -> None:
+    logging.basicConfig(level=getattr(logging, log_level.upper(), logging.INFO))
+    log = logging.getLogger("indexer")
+
+    t0 = time.time()
     docs_dir = docs_dir.resolve()
     index_dir = index_dir.resolve()
+    index_dir.mkdir(parents=True, exist_ok=True)
 
-    if not docs_dir.exists():
-        raise FileNotFoundError(f"docs_dir not found: {docs_dir}")
+    doc_paths = sorted(list(iter_doc_paths(docs_dir)))
+    if not doc_paths:
+        raise FileNotFoundError(f"No supported documents found in {docs_dir} (supported: {sorted(SUPPORTED_EXTS)})")
 
-    chunks = build_chunks_from_docs(docs_dir)
-    if not chunks:
-        raise ValueError(
-            f"No supported documents found in {docs_dir}. "
-            f"Supported extensions: {sorted(SUPPORTED_EXTS)}"
-        )
+    log.info("Docs dir: %s", docs_dir)
+    log.info("Index dir: %s", index_dir)
+    log.info("Found %d document(s)", len(doc_paths))
 
+    all_chunks: List[Chunk] = []
+    for p in doc_paths:
+        ch = build_chunks_for_doc(p, max_chars=max_chars, overlap=overlap)
+        log.info("Chunked %-30s -> %d chunk(s)", p.name, len(ch))
+        all_chunks.extend(ch)
+
+    if not all_chunks:
+        raise RuntimeError("No chunks generated. Check your documents content.")
+
+    texts = [c.text for c in all_chunks]
+
+    log.info("Loading embedding model: %s", model_name)
     model = SentenceTransformer(model_name)
 
-    texts = [c.text for c in chunks]
+    log.info("Embedding %d chunk(s)...", len(texts))
     emb = model.encode(
         texts,
         batch_size=batch_size,
-        show_progress_bar=True,
         convert_to_numpy=True,
         normalize_embeddings=False,
+        show_progress_bar=False,
     ).astype(np.float32)
 
-    emb_norm = l2_normalize(emb)
+    emb = l2_normalize(emb).astype(np.float32)
 
-    faiss_index, faiss_status = try_build_faiss_index(emb_norm)
+    # Save artifacts
+    chunks_path = index_dir / "chunks.jsonl"
+    emb_path = index_dir / "embeddings.npy"
+    meta_path = index_dir / "index_meta.json"
+    faiss_path = index_dir / "index.faiss"
 
-    save_index(
-        index_dir=index_dir,
-        model_name=model_name,
-        chunks=chunks,
-        embeddings_norm=emb_norm,
-        faiss_index=faiss_index,
-        faiss_status=faiss_status,
-    )
+    with chunks_path.open("w", encoding="utf-8") as f:
+        for c in all_chunks:
+            f.write(json.dumps(asdict(c), ensure_ascii=False) + "\n")
 
-    return {
-        "docs_dir": str(docs_dir),
-        "index_dir": str(index_dir),
+    np.save(emb_path, emb)
+
+    faiss_status = try_build_faiss_index(emb, faiss_path)
+
+    meta = {
         "model_name": model_name,
-        "num_chunks": len(chunks),
-        "faiss_status": faiss_status,
+        "supported_exts": sorted(SUPPORTED_EXTS),
+        "num_docs": len(doc_paths),
+        "num_chunks": len(all_chunks),
+        "embedding_dim": int(emb.shape[1]),
+        "chunking": {"max_chars": max_chars, "overlap": overlap, "mode": "smart-boundaries"},
+        "faiss": {"status": faiss_status, "path": str(faiss_path)},
+        "generated_at_unix": int(time.time()),
     }
+    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+    log.info("Wrote: %s", chunks_path)
+    log.info("Wrote: %s", emb_path)
+    log.info("Wrote: %s", meta_path)
+    log.info("FAISS: %s", faiss_status)
+    log.info("Done in %.2fs", time.time() - t0)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Build a Mini-RAG vector index from data_docs/.")
-    parser.add_argument("--docs_dir", type=str, default="data_docs", help="Folder with .txt/.md docs")
-    parser.add_argument("--index_dir", type=str, default="data_index", help="Output folder for index files")
-    parser.add_argument(
-        "--model_name",
-        type=str,
-        default="sentence-transformers/all-MiniLM-L6-v2",
-        help="SentenceTransformers model name",
-    )
+    parser = argparse.ArgumentParser(description="Build Mini-RAG index from local documents.")
+    parser.add_argument("--docs_dir", type=str, default="data_docs")
+    parser.add_argument("--index_dir", type=str, default="data_index")
+    parser.add_argument("--model_name", type=str, default="sentence-transformers/all-MiniLM-L6-v2")
+    parser.add_argument("--max_chars", type=int, default=900)
+    parser.add_argument("--overlap", type=int, default=150)
     parser.add_argument("--batch_size", type=int, default=32)
-
+    parser.add_argument("--log_level", type=str, default="INFO")
     args = parser.parse_args()
-    result = build_index(
+
+    build_index(
         docs_dir=Path(args.docs_dir),
         index_dir=Path(args.index_dir),
         model_name=args.model_name,
+        max_chars=args.max_chars,
+        overlap=args.overlap,
         batch_size=args.batch_size,
+        log_level=args.log_level,
     )
-    print(json.dumps(result, indent=2))
 
 
 if __name__ == "__main__":
