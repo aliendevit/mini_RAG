@@ -1,0 +1,2 @@
+﻿Vector Search
+Top-k retrieval can use FAISS or cosine similarity with NumPy when FAISS is unavailable.

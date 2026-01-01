@@ -1,0 +1,10 @@
+{
+  "model_name": "sentence-transformers/all-MiniLM-L6-v2",
+  "num_chunks": 5,
+  "embedding_dim": 384,
+  "faiss_status": "faiss_unavailable: ModuleNotFoundError: No module named 'faiss'",
+  "files_supported": [
+    ".md",
+    ".txt"
+  ]
+}

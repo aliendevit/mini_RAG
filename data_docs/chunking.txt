@@ -1,0 +1,2 @@
+﻿Chunking
+Chunking splits documents into smaller parts. Overlap prevents losing context at boundaries.

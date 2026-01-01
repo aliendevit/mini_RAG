@@ -1,0 +1,2 @@
+﻿Embeddings
+Embeddings are vectors representing meaning. Similarity search retrieves the closest vectors.

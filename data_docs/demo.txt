@@ -1,0 +1,4 @@
+﻿Mini-RAG Demo Document
+
+This project indexes documents, embeds chunks, retrieves top-k context,
+and answers questions using retrieved context (context-only mode).

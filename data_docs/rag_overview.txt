@@ -1,0 +1,2 @@
+﻿RAG Overview
+RAG retrieves relevant chunks from documents and uses them as context for answering.
