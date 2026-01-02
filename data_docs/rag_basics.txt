@@ -1,0 +1,1 @@
+﻿RAG (Retrieval-Augmented Generation) retrieves the top-k most relevant text chunks from documents using embeddings and vector search, then generates an answer grounded only in the retrieved context.
