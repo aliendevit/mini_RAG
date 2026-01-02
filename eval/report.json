@@ -1,0 +1,127 @@
+{
+  "index_dir": "C:\\Users\\asult\\Downloads\\opengeo_ready\\ml_RAG\\mini_rag\\data_index",
+  "questions": "C:\\Users\\asult\\Downloads\\opengeo_ready\\ml_RAG\\mini_rag\\eval\\questions.jsonl",
+  "k": 5,
+  "hit_at_k": 1.0,
+  "mrr_at_k": 0.3333333333333333,
+  "results": [
+    {
+      "id": "q1",
+      "question": "What is RAG?",
+      "expected_sources": [
+        "rag_basics.txt"
+      ],
+      "hit_rank": 3,
+      "top_sources": [
+        "rag_overview.txt",
+        "rag_overview.md",
+        "rag_basics.txt",
+        "llm_in_rag.md",
+        "ml_vs_rag.md"
+      ],
+      "top_scores": [
+        0.5530554056167603,
+        0.4994705617427826,
+        0.4192979037761688,
+        0.36173585057258606,
+        0.3519524335861206
+      ],
+      "notes": "Definition should be in rag_basics.txt"
+    },
+    {
+      "id": "q2",
+      "question": "What does Top-K mean in retrieval?",
+      "expected_sources": [
+        "rag_basics.txt",
+        "demo.txt"
+      ],
+      "hit_rank": 3,
+      "top_sources": [
+        "chunking.md",
+        "vector_search.txt",
+        "rag_basics.txt",
+        "vector_search.md",
+        "ml_vs_rag.md"
+      ],
+      "top_scores": [
+        0.4930577576160431,
+        0.4928291141986847,
+        0.47021564841270447,
+        0.44685253500938416,
+        0.4319603443145752
+      ],
+      "notes": "Either file may mention Top-K"
+    },
+    {
+      "id": "q3",
+      "question": "What are embeddings used for in this project?",
+      "expected_sources": [
+        "rag_basics.txt",
+        "demo.txt"
+      ],
+      "hit_rank": 4,
+      "top_sources": [
+        "embeddings.txt",
+        "embeddings.md",
+        "embeddings.md",
+        "demo.txt",
+        "ml_vs_rag.md"
+      ],
+      "top_scores": [
+        0.6041148900985718,
+        0.5973227024078369,
+        0.48559293150901794,
+        0.42917418479919434,
+        0.3795849680900574
+      ],
+      "notes": "Embeddings + vector search basics"
+    },
+    {
+      "id": "q4",
+      "question": "How does this project answer questions without an LLM?",
+      "expected_sources": [
+        "rag_basics.txt",
+        "demo.txt"
+      ],
+      "hit_rank": 4,
+      "top_sources": [
+        "llm_in_rag.md",
+        "llm_in_rag.md",
+        "prompting_basics.md",
+        "demo.txt",
+        "rag_overview.md"
+      ],
+      "top_scores": [
+        0.5680626630783081,
+        0.5044610500335693,
+        0.4410184323787689,
+        0.3729493319988251,
+        0.34185516834259033
+      ],
+      "notes": "Extractive baseline / context-only"
+    },
+    {
+      "id": "q5",
+      "question": "Which folder contains the documents to ingest?",
+      "expected_sources": [
+        "demo.txt"
+      ],
+      "hit_rank": 2,
+      "top_sources": [
+        "rag_overview.md",
+        "demo.txt",
+        "rag_overview.txt",
+        "rag_overview.md",
+        "prompting_basics.md"
+      ],
+      "top_scores": [
+        0.3873898386955261,
+        0.3353235125541687,
+        0.3264971673488617,
+        0.3018321394920349,
+        0.2888956069946289
+      ],
+      "notes": "Should be described in demo / README-like content"
+    }
+  ]
+}
