@@ -12,11 +12,12 @@ from src.retriever import Retriever, RetrievedChunk, context_only_answer
 
 
 class AskRequest(BaseModel):
-    question: str = Field(..., min_length=1, description="User question")
-    top_k: int = Field(5, ge=1, le=20, description="How many chunks to retrieve")
+    question: str = Field(..., min_length=1)
+    top_k: int = Field(5, ge=1, le=20)
 
 
 class SourceItem(BaseModel):
+    rank: int
     chunk_id: str
     source_name: str
     source_path: str
@@ -32,63 +33,55 @@ class AskResponse(BaseModel):
     sources: List[SourceItem]
 
 
-def _preview(text: str, limit: int = 240) -> str:
-    text = (text or "").strip().replace("\n", " ")
-    if len(text) <= limit:
-        return text
-    return text[:limit].rstrip() + "..."
-
-
 def create_app(index_dir: Optional[str] = None) -> FastAPI:
-    app = FastAPI(title="Mini-RAG API", version="0.1.0")
+    app = FastAPI(title="Mini-RAG API", version="0.2.0")
 
-    rag_index_dir = index_dir or os.environ.get("RAG_INDEX_DIR", "data_index")
-    rag_index_path = Path(rag_index_dir)
+    rag_index_dir = index_dir or os.getenv("RAG_INDEX_DIR", "data_index")
+    rag_index_path = Path(rag_index_dir).resolve()
 
-    retriever_holder = {"retriever": None}  # simple mutable holder
-
-    @app.get("/health")
-    def health():
-        return {"status": "ok"}
+    retriever_holder = {"retriever": None}
 
     def get_retriever() -> Retriever:
         if retriever_holder["retriever"] is None:
-            if not rag_index_path.exists():
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Index directory not found: {rag_index_path}. Run indexer first.",
-                )
-            retriever_holder["retriever"] = Retriever(rag_index_path)
+            try:
+                retriever_holder["retriever"] = Retriever(rag_index_path)
+            except FileNotFoundError as e:
+                # Make it a clean client error instead of 500
+                raise HTTPException(status_code=400, detail=str(e))
         return retriever_holder["retriever"]
 
+    @app.get("/health")
+    def health() -> dict:
+        return {"status": "ok"}
+
     @app.post("/ask", response_model=AskResponse)
-    def ask(payload: AskRequest):
+    def ask(payload: AskRequest) -> AskResponse:
         retriever = get_retriever()
 
-        retrieved: List[RetrievedChunk] = retriever.retrieve(payload.question, top_k=payload.top_k)
+        retrieved = retriever.retrieve(payload.question, top_k=payload.top_k)
         answer = context_only_answer(payload.question, retrieved)
 
-        sources: List[SourceItem] = [
-            SourceItem(
-                chunk_id=r.chunk_id,
-                source_name=r.source_name,
-                source_path=r.source_path,
-                score=r.score,
-                start_char=r.start_char,
-                end_char=r.end_char,
-                text_preview=_preview(r.text),
+        sources: List[SourceItem] = []
+        for idx, r in enumerate(retrieved, start=1):
+            preview = r.text.strip().replace("\n", " ")
+            if len(preview) > 240:
+                preview = preview[:240].rstrip() + "..."
+            sources.append(
+                SourceItem(
+                    rank=idx,
+                    chunk_id=r.chunk_id,
+                    source_name=r.source_name,
+                    source_path=r.source_path,
+                    score=float(r.score),
+                    start_char=r.start_char,
+                    end_char=r.end_char,
+                    text_preview=preview,
+                )
             )
-            for r in retrieved
-        ]
-
-        if not answer.strip():
-            # Should never happen, but keep API contract safe.
-            answer = "No answer could be generated from the retrieved context."
 
         return AskResponse(question=payload.question, answer=answer, sources=sources)
 
     return app
 
 
-# Uvicorn entrypoint:
 app = create_app()
