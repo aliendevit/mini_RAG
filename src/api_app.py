@@ -7,8 +7,24 @@ from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
+
+from src.retriever import Retriever
 from src.answerer import extractive_answer
-from src.retriever import Retriever, RetrievedChunk, context_only_answer
+from src.hf_llm_client import HFConfig, HFLocalLLM, build_rag_prompt
+
+
+def looks_bad(text: str) -> bool:
+    t = (text or "").strip()
+    if len(t) < 10:
+        return True
+    if len(t) > 2000:
+        return True
+
+    lines = [ln.strip() for ln in t.splitlines() if ln.strip()]
+    if len(lines) >= 6 and len(set(lines)) <= max(1, len(lines) // 3):
+        return True
+
+    return False
 
 
 class AskRequest(BaseModel):
@@ -34,19 +50,21 @@ class AskResponse(BaseModel):
 
 
 def create_app(index_dir: Optional[str] = None) -> FastAPI:
-    app = FastAPI(title="Mini-RAG API", version="0.2.0")
+    app = FastAPI(title="Mini-RAG API", version="0.4.0")
 
     rag_index_dir = index_dir or os.getenv("RAG_INDEX_DIR", "data_index")
     rag_index_path = Path(rag_index_dir).resolve()
 
     retriever_holder = {"retriever": None}
 
+    hf_cfg = HFConfig.from_env()
+    hf_llm = HFLocalLLM(hf_cfg) if hf_cfg.enabled else None
+
     def get_retriever() -> Retriever:
         if retriever_holder["retriever"] is None:
             try:
                 retriever_holder["retriever"] = Retriever(rag_index_path)
             except FileNotFoundError as e:
-                # Make it a clean client error instead of 500
                 raise HTTPException(status_code=400, detail=str(e))
         return retriever_holder["retriever"]
 
@@ -59,7 +77,30 @@ def create_app(index_dir: Optional[str] = None) -> FastAPI:
         retriever = get_retriever()
 
         retrieved = retriever.retrieve(payload.question, top_k=payload.top_k)
-        answer, _ = extractive_answer(payload.question, retrieved, retriever.model)
+
+        extractive_text, _ = extractive_answer(payload.question, retrieved, retriever.model)
+        answer = extractive_text
+
+        if hf_llm is not None and hf_cfg.enabled:
+            context = "\n\n".join(
+                [f"S{i} ({r.source_name})\n{r.text.strip()[:900]}" for i, r in enumerate(retrieved, start=1)]
+            )
+            prompt = build_rag_prompt(payload.question, context)
+
+
+            try:
+                llm_out = hf_llm.generate(prompt)
+
+    # Guardrail: accept only grounded answers with (S#) citations
+                if llm_out and not looks_ungrounded(llm_out, payload.top_k):
+                    answer = llm_out
+                else:
+                    answer = extractive_text
+
+            except Exception:
+                answer = extractive_text
+
+
         sources: List[SourceItem] = []
         for idx, r in enumerate(retrieved, start=1):
             preview = r.text.strip().replace("\n", " ")
@@ -82,5 +123,22 @@ def create_app(index_dir: Optional[str] = None) -> FastAPI:
 
     return app
 
+import re
+
+def looks_ungrounded(text: str, top_k: int) -> bool:
+    t = (text or "").strip()
+    if len(t) < 10 or len(t) > 2000:
+        return True
+
+    cites = re.findall(r"\(S(\d+)\)", t)
+    if not cites:
+        return True
+
+    for c in cites:
+        n = int(c)
+        if n < 1 or n > top_k:
+            return True
+
+    return False
 
 app = create_app()
