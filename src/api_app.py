@@ -7,7 +7,7 @@ from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
-
+from src.answerer import extractive_answer
 from src.retriever import Retriever, RetrievedChunk, context_only_answer
 
 
@@ -59,8 +59,7 @@ def create_app(index_dir: Optional[str] = None) -> FastAPI:
         retriever = get_retriever()
 
         retrieved = retriever.retrieve(payload.question, top_k=payload.top_k)
-        answer = context_only_answer(payload.question, retrieved)
-
+        answer, _ = extractive_answer(payload.question, retrieved, retriever.model)
         sources: List[SourceItem] = []
         for idx, r in enumerate(retrieved, start=1):
             preview = r.text.strip().replace("\n", " ")

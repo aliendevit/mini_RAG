@@ -39,6 +39,7 @@ def test_ask_schema(tmp_path: Path) -> None:
     assert r.status_code == 200
 
     data = r.json()
+    assert "Extractive answer" in data["answer"]
     assert "question" in data and data["question"]
     assert "answer" in data and isinstance(data["answer"], str) and data["answer"].strip()
     assert "sources" in data and isinstance(data["sources"], list)
