@@ -31,3 +31,15 @@ Example request/response
 ```powershell
 python -m src.eval_retrieval --index_dir .\data_index --questions .\eval\questions.jsonl --k 5
 
+## Projektbeschreibung (Deutsch)
+
+Dieses Projekt ist ein kompakter **Mini-RAG-Service**, der lokale Textdokumente indexiert und Fragen mit nachvollziehbaren Quellen beantwortet.  
+Die Pipeline umfasst **Chunking**, **Embeddings** (Sentence-Transformers), **Top-K Retrieval** via Vektorsuche sowie eine robuste Answering-Schicht:
+
+- Deterministisches **extractive Answering** als Baseline zur Minimierung von Halluzinationen  
+- Optionale lokale **HuggingFace-LLM** (z. B. Gemma) zur Formulierung  
+- **Grounding-Guardrail**: Antworten werden nur akzeptiert, wenn sie Quellen (S1…Sk) referenzieren, sonst Fallback auf extractive Answering  
+- **FastAPI**: `GET /health`, `POST /ask` → `{question, answer, sources[]}`  
+- **Tests & Evaluation**: pytest + Retrieval-Evaluation (**Hit@K**, **MRR@K**) auf einem JSONL-Fragenset  
+
+Tech-Stack: Python 3.12, FastAPI, sentence-transformers, NumPy/Scikit-learn (FAISS optional), pytest, GitHub Actions.

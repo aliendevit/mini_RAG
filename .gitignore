@@ -16,3 +16,5 @@ huggingface/
 # Local embedding model folder
 all-MiniLM-L6-v2/
 models/
+
+data_index/

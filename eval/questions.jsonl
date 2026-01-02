@@ -1,0 +1,5 @@
+﻿{"id":"q1","question":"What is RAG?","expected_sources":["rag_basics.txt"],"notes":"Definition should be in rag_basics.txt"}
+{"id":"q2","question":"What does Top-K mean in retrieval?","expected_sources":["rag_basics.txt","demo.txt"],"notes":"Either file may mention Top-K"}
+{"id":"q3","question":"What are embeddings used for in this project?","expected_sources":["rag_basics.txt","demo.txt"],"notes":"Embeddings + vector search basics"}
+{"id":"q4","question":"How does this project answer questions without an LLM?","expected_sources":["rag_basics.txt","demo.txt"],"notes":"Extractive baseline / context-only"}
+{"id":"q5","question":"Which folder contains the documents to ingest?","expected_sources":["demo.txt"],"notes":"Should be described in demo / README-like content"}
