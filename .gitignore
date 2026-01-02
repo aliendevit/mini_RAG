@@ -1,0 +1,18 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Virtual env
+.venv/
+
+# Index/cache
+data_index/
+.cache/
+**/.cache/
+huggingface/
+**/huggingface/
+
+# Local embedding model folder
+all-MiniLM-L6-v2/
+models/
