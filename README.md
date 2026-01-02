@@ -24,4 +24,10 @@ Run API
 Run tests
 
 Example request/response
+### Current metrics (toy set)
+- Hit@5: 1.0
+- MRR@5: 0.33
+
+```powershell
+python -m src.eval_retrieval --index_dir .\data_index --questions .\eval\questions.jsonl --k 5
 
